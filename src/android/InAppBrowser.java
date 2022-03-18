@@ -85,7 +85,6 @@ import java.util.HashMap;
 import java.util.StringTokenizer;
 
 import android.Manifest;
-import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Log;
 import androidx.core.content.FileProvider;
@@ -161,7 +160,7 @@ public class InAppBrowser extends CordovaPlugin {
     private boolean fullscreen = true;
     private String[] allowedSchemes;
     private InAppBrowserClient currentClient;
-    private String photoFilePath;
+    private File photoFile;
     private Uri photoFileUri;
 
     /**
@@ -951,29 +950,13 @@ public class InAppBrowser extends CordovaPlugin {
                         }
                         mUploadCallback = filePathCallback;
 
-                        Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-
-                        if (takePictureIntent.resolveActivity(cordova.getActivity().getPackageManager()) != null) {
-
-                            File photoFile = null;
-                            try {
-                                photoFile = createImageFile();
-                                takePictureIntent.putExtra("PhotoPath", photoFilePath);
-                            } catch (IOException ex) {
-                                Log.e(LOG_TAG, "Image file creation failed", ex);
-                            }
-                            if (photoFile != null) {
-                                photoFilePath = "file:/" + photoFile.getAbsolutePath();
-                                photoFileUri = FileProvider.getUriForFile(
-                                        cordova.getActivity().getApplicationContext(),
-                                        cordova.getActivity().getPackageName() + ".fileprovider",
-                                        photoFile
-                                );
-                                takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoFileUri);
-                            } else {
-                                takePictureIntent = null;
-                            }
+                        // Set up the intent to take a picture, if the file input has the capture attribute and any `image/` in the accept attribute.
+                        // Ex: <input type="file" accept="image/*" capture />
+                        Intent takePictureIntent = null;
+                        if (shouldOfferCameraForFileInput(fileChooserParams)) {
+                            takePictureIntent = buildTakePictureIntent();
                         }
+
                         // Create File Chooser Intent
                         Intent contentSelectionIntent = new Intent(Intent.ACTION_GET_CONTENT);
                         contentSelectionIntent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -1132,9 +1115,54 @@ public class InAppBrowser extends CordovaPlugin {
     private File createImageFile() throws IOException{
         @SuppressLint("SimpleDateFormat") String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
         String imageFileName = "img_"+timeStamp+"_";
-        File storageDir = this.cordova.getActivity().getExternalFilesDir(Environment.DIRECTORY_PICTURES);
-        File file = new File(storageDir, imageFileName + ".jpg");
-        return file;
+        File cacheDir = this.cordova.getActivity().getCacheDir();
+        // Create the cache directory if it doesn't exist
+        cacheDir.mkdirs();
+        return new File(cacheDir.getAbsolutePath(), imageFileName + ".jpg");
+    }
+
+    // Returns true if there is a system camera and the accept types on the file input want an image (e.g. image/png or image/*).
+    // Note: another good indicator would be to check fileChooserParams.isCaptureEnabled(), but that is not done here.
+    private boolean shouldOfferCameraForFileInput(WebChromeClient.FileChooserParams fileChooserParams) {
+        boolean hasCamera = cordova.getActivity().getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY);
+        boolean wantsImage = false;
+        for (String acceptType : fileChooserParams.getAcceptTypes()) {
+          if (acceptType.startsWith("image/")) {
+            wantsImage = true;
+            break;
+          }
+        }
+
+        return hasCamera && wantsImage;
+    }
+
+    private Intent buildTakePictureIntent() {
+        Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+
+        photoFile = null;
+        try {
+            photoFile = createImageFile();
+        } catch (IOException ex) {
+            Log.e(LOG_TAG, "Image file creation failed", ex);
+        }
+        if (photoFile != null) {
+            try {
+                // Compute the Content URI for our file. See: https://developer.android.com/training/camera/photobasics#TaskPath
+                photoFileUri = FileProvider.getUriForFile(
+                    cordova.getActivity().getApplicationContext(),
+                    cordova.getActivity().getPackageName() + ".fileprovider",
+                    photoFile
+                );
+                takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoFileUri);
+            } catch(IllegalArgumentException ex) {
+                Log.e(LOG_TAG, "File provider initialization failed - configure your FileProvider in the app manifest", ex);
+                takePictureIntent = null;
+            }
+        } else {
+            takePictureIntent = null;
+        }
+
+        return takePictureIntent;
     }
 
     /**
@@ -1188,6 +1216,9 @@ public class InAppBrowser extends CordovaPlugin {
         }
         mUploadCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, customIntent));
         mUploadCallback = null;
+        if (photoFile != null) {
+          photoFile.deleteOnExit();
+        }
     }
 
     /**
