@@ -1150,7 +1150,7 @@ public class InAppBrowser extends CordovaPlugin {
                 // Compute the Content URI for our file. See: https://developer.android.com/training/camera/photobasics#TaskPath
                 photoFileUri = FileProvider.getUriForFile(
                     cordova.getActivity().getApplicationContext(),
-                    cordova.getActivity().getPackageName() + ".fileprovider",
+                    cordova.getActivity().getPackageName() + ".cdv.core.file.provider",
                     photoFile
                 );
                 takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoFileUri);
